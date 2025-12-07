@@ -26,30 +26,53 @@
 #define CHANNEL2FREQ 5 + 2407
 
 // usage: (channel * CHANNEL2X)
-#define CHANNEL2X (SCREEN_W / (CHANNEL_COUNT + 1)) + 20
+#define CHANNEL2X (SCREEN_W / (CHANNEL_COUNT + 1)) + 23
 
 // usage: (rssi * RSSI2Y)
-#define RSSI2Y -2 - 10
+#define RSSI2Y -2
 
-// 150ms = ~2s, 230ms = ~3s, 300ms = ~4s
-#define CHANNEL_HOP_INTERVAL_MS 150
-
+// touchscreen stuff
+#define CMD_X_READ 0b10010000 //0x90
+#define CMD_Y_READ 0b11010000 //0xD0
 #define SCREEN_W 320
 #define SCREEN_H 240
-#define BASELINE 180
+#define BASELINE 200
+
+#define PAUSE_X1 5
+#define PAUSE_Y1 200
+#define PAUSE_X2 30
+#define PAUSE_Y2 225
+
+// speed 3,     speed 2,     speed 1
+// 150ms = ~2s, 230ms = ~3s, 300ms = ~4s
+#define SPEED2INTERVAL -77 + 384
+
+#define MIN_SPEED 1
+#define MAX_SPEED 3
+
+#define SPEED_X1 250
+#define SPEED_Y1 3
+#define SPEED_X2 296
+#define SPEED_Y2 15
 
 #define MAX_APS 50
 
 typedef struct {
     char ssid[32];
     int8_t rssi;
+    uint8_t rate;
+    uint8_t sig_mode;
     uint8_t channel;
 	uint8_t bandwidth;
+    uint32_t timestamp;
 } ap_info_t;
 
 QueueHandle_t ap_queue;
 
 const static char *TAG = "wifi_mapper";
+
+volatile bool playing = true;
+volatile uint8_t speed_setting = MIN_SPEED;
 
 
 void init_nvs() {
@@ -62,8 +85,53 @@ void init_nvs() {
 }
 
 
+void draw_pause() {
+    uint16_t x_unit = (PAUSE_X2 - PAUSE_X1) / 5;
+    uint16_t y_unit = (PAUSE_Y2 - PAUSE_Y1) / 5;
+    
+    LCD_DrawFillRectangle(PAUSE_X1, PAUSE_Y1, PAUSE_X2, PAUSE_Y2, GRAY); // button bg
+
+    LCD_DrawFillRectangle(PAUSE_X1 + x_unit, PAUSE_Y1 + y_unit, PAUSE_X1 + 2 * x_unit, PAUSE_Y2 - y_unit, WHITE); // left bar
+    LCD_DrawFillRectangle(PAUSE_X2 - 2 * x_unit, PAUSE_Y1 + y_unit, PAUSE_X2 - x_unit, PAUSE_Y2 - y_unit, WHITE); // right bar
+}
+
+void draw_play() {
+    uint16_t x_unit = (PAUSE_X2 - PAUSE_X1) / 5;
+    uint16_t y_unit = (PAUSE_Y2 - PAUSE_Y1) / 5;
+
+    LCD_DrawFillRectangle(PAUSE_X1, PAUSE_Y1, PAUSE_X2, PAUSE_Y2, GRAY); // button bg
+
+    LCD_DrawFillTriangel( // play icon
+        PAUSE_X1 + x_unit, PAUSE_Y1 + y_unit,
+        PAUSE_X1 + x_unit, PAUSE_Y2 - y_unit,
+        PAUSE_X2 - x_unit, (PAUSE_Y2 + PAUSE_Y1) / 2,
+        WHITE
+    );
+}
+
+
+void draw_channel_selection(uint8_t channel, uint16_t color) {
+    uint16_t x_coord = channel * CHANNEL2X;
+    LCD_DrawLine(x_coord, -10 * RSSI2Y, x_coord, BASELINE - 1, color);
+    if (color == GREEN) {
+        LCD_DrawLine(x_coord - 1, -10 * RSSI2Y, x_coord - 1, BASELINE - 1, BLACK);
+        LCD_DrawLine(x_coord + 1, -10 * RSSI2Y, x_coord + 1, BASELINE - 1, BLACK);
+    }
+}
+
+bool isBetween(uint16_t value, uint16_t min, uint16_t max) {
+    if (value > max) {
+        return false;
+    }
+    if (value < min) {
+        return false;
+    }
+    return true;
+}
+
+
 static void wifi_promiscuous_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT) {
+    if (playing && type != WIFI_PKT_MGMT) {
 		return; // filter
 	}
 
@@ -72,7 +140,10 @@ static void wifi_promiscuous_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     // RSSI & channel
     info.rssi = pkt->rx_ctrl.rssi;
+    info.rate = pkt->rx_ctrl.rate;
+    info.sig_mode = pkt->rx_ctrl.sig_mode;
     info.channel = pkt->rx_ctrl.channel;
+    info.timestamp = pkt->rx_ctrl.timestamp;
 	
 	// Determine bandwidth
 	if (pkt->rx_ctrl.sig_mode == 1) { // 802.11n
@@ -93,7 +164,9 @@ void sniffer_task(void *pvParameters) {
     sync.bandwidth = 0;
 
     while (1) {
-		channel++;
+        if (playing) {
+            channel++;
+        }
         if (channel > CHANNEL_COUNT) {
             channel = 1;
 		};
@@ -101,19 +174,10 @@ void sniffer_task(void *pvParameters) {
         
         xQueueSend(ap_queue, &sync, NULL);
         esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-        vTaskDelay(pdMS_TO_TICKS(CHANNEL_HOP_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL));
     }
 }
 
-
-void draw_channel_selection(uint8_t channel, uint16_t color) {
-    uint16_t x_coord = channel * CHANNEL2X;
-    LCD_DrawLine(x_coord, 0, x_coord, BASELINE - 1, color);
-    if (color == GREEN) {
-        LCD_DrawLine(x_coord - 1, 0, x_coord - 1, BASELINE - 1, BLACK);
-        LCD_DrawLine(x_coord + 1, 0, x_coord + 1, BASELINE - 1, BLACK);
-    }
-}
 
 void render_task(void *pvParameters) {
     ap_info_t info;
@@ -125,13 +189,13 @@ void render_task(void *pvParameters) {
     char text[32];
     for (uint16_t i = 1; i <= CHANNEL_COUNT; i++) {
         line_x = i * CHANNEL2X;
-        LCD_DrawLine(line_x, 0, line_x, BASELINE, GRAY);
+        LCD_DrawLine(line_x, -10 * RSSI2Y, line_x, BASELINE, GRAY);
         LCD_DrawLine(line_x, BASELINE, line_x, BASELINE + 4, WHITE);
 
-        sprintf(text, "%d", i * CHANNEL2FREQ);
+        sprintf(text, "Ch.%d", i);
 
 	    LCD_Set_Orientation(LCD_DISPLAY_ORIENTATION_PORTRAIT_INVERTED);
-        LCD_ShowString(BASELINE + 7, SCREEN_W - line_x - 6, BLACK, WHITE, 12, text, 0);
+        LCD_ShowString(BASELINE + 7, SCREEN_W - line_x - 7, BLACK, WHITE, 12, text, 0);
 	    LCD_Set_Orientation(LCD_DISPLAY_ORIENTATION_LANDSCAPE);
     }
 
@@ -139,18 +203,39 @@ void render_task(void *pvParameters) {
     uint16_t line_y = 0;
     for (uint16_t nrssi = 10; nrssi <= 90; nrssi += 10) {
         line_y = -nrssi * RSSI2Y;
-        LCD_DrawLine(40, line_y, SCREEN_W, line_y, GRAY);;
+        LCD_DrawLine(CHANNEL2X, line_y, SCREEN_W, line_y, GRAY);
 
         sprintf(text, "-%ddBm", nrssi);
         LCD_ShowString(5, line_y - 6, BLACK, WHITE, 12, text, 1);
     }
 
-    LCD_DrawLine(40, BASELINE, SCREEN_W, BASELINE, WHITE);
+    LCD_DrawLine(CHANNEL2X, BASELINE, SCREEN_W, BASELINE, WHITE);
 
-    uint16_t delayInTicks = pdMS_TO_TICKS(CHANNEL_HOP_INTERVAL_MS - 1);
+    uint16_t delayInTicks = pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL - 1);
+    bool wasPlaying = false;
+    uint8_t prevSpeed = 0;
 
     while (1) {
-        if (xQueueReceive(ap_queue, &info, delayInTicks)) {
+        // check if speed_setting was changed
+        if (speed_setting != prevSpeed) {
+            sprintf(text, "SPEED: %d", speed_setting);
+            LCD_DrawFillRectangle(SPEED_X1, SPEED_Y1, SPEED_X2, SPEED_Y2, GRAY);
+            LCD_ShowString(SPEED_X1, SPEED_Y1, GRAY, WHITE, 12, text, 1);
+            delayInTicks = pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL - 1);
+            prevSpeed = speed_setting;
+            vTaskDelay(delayInTicks);
+        }
+        // check if pause/play was pressed
+        if (playing ^ wasPlaying) {
+            if (playing) {
+                draw_pause();
+            } else {
+                draw_play();
+            }
+            wasPlaying = playing;
+            vTaskDelay(delayInTicks);
+        }
+        if (playing && xQueueReceive(ap_queue, &info, delayInTicks)) {
             if (info.rssi == 0 && info.bandwidth == 0) { // sync frame
                 draw_channel_selection(info.channel, GRAY);
                 if (info.channel == CHANNEL_COUNT) {
@@ -207,4 +292,28 @@ void app_main(void) {
 
 	ESP_LOGI(TAG, "Starting render task...");
     xTaskCreate(render_task, "render_task", 4096, NULL, 2, NULL);
+
+    bool touch_read = false;
+    bool posedge = false;
+
+    while (1) { // touch event loop
+        touch_read = xpt2046_read();
+		if (touch_read && !posedge) {
+            // pause/play button
+            if (isBetween(TouchX, PAUSE_X1, PAUSE_X2) && isBetween(TouchY, PAUSE_Y1, PAUSE_Y2)) {
+                playing = !playing;
+                ESP_LOGI(TAG, "Playing: %d", playing);
+            }
+            // speed
+            if (TouchX > SPEED_X1 && TouchY < SPEED_Y2) {
+                speed_setting++;
+                if (speed_setting > MAX_SPEED) {
+                    speed_setting = MIN_SPEED;
+                }
+                ESP_LOGI(TAG, "Speed: %d", speed_setting);
+            }
+		}
+        posedge = touch_read;
+		vTaskDelay(50 / portTICK_PERIOD_MS);
+	}
 }
