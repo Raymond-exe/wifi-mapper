@@ -55,6 +55,18 @@
 #define SPEED_X2 296
 #define SPEED_Y2 14
 
+#define INFO_LINE_1 209
+#define INFO_LINE_2 220
+
+#define INFO_CHAN_X 40
+#define INFO_RSSI_X 100
+#define INFO_RATE_X 200
+#define INFO_SIG_X 240
+
+#define INFO_FREQ_X 40
+#define INFO_BANDWIDTH_X 150
+#define INFO_TIME_X 210
+
 #define MAX_APS 50
 #define TAP_RADIUS 10
 
@@ -86,6 +98,8 @@ const static char *TAG = "wifi_mapper";
 
 volatile bool playing = true;
 volatile uint8_t speed_setting = MIN_SPEED;
+
+char text[32]; // general-use text buffer
 
 
 void init_nvs() {
@@ -134,8 +148,6 @@ void draw_channel_selection(uint8_t channel, uint16_t color) {
 
 
 void draw_x_values(bool useFrequencies) {
-    char text[32];
-
     LCD_DrawFillRectangle(PAUSE_X2 + 5, BASELINE + 5, SCREEN_W, SCREEN_H, BLACK);
 
     LCD_Set_Orientation(LCD_DISPLAY_ORIENTATION_PORTRAIT_INVERTED); // to print text sideways
@@ -154,6 +166,29 @@ void draw_x_values(bool useFrequencies) {
 
 void draw_info(ap_info_t info) {
     LCD_DrawFillRectangle(PAUSE_X2 + 5, BASELINE + 7, SCREEN_W - 5, SCREEN_H - 5, GRAY);
+
+    // Line 1: Channel, RSSI, Rate, & sig_mode
+    sprintf(text, "Ch: %d", info.channel);
+    LCD_ShowString(INFO_CHAN_X, INFO_LINE_1, BLACK, WHITE, 12, text, 1);
+
+    sprintf(text, "RSSI: %ddBm", info.rssi);
+    LCD_ShowString(INFO_RSSI_X, INFO_LINE_1, BLACK, WHITE, 12, text, 1);
+
+    sprintf(text, "PHY rate: %dkbps", info.rate * 500);
+    LCD_ShowString(INFO_RATE_X, INFO_LINE_1, BLACK, WHITE, 12, text, 1);
+
+    // sprintf(text, "sig_mode: %d", info.sig_mode);
+    // LCD_ShowString(INFO_SIG_X, INFO_LINE_1, BLACK, WHITE, 12, text, 1);
+
+    // Line 2: Freq, Bandwidth, & timestamp
+    sprintf(text, "Freq: %dMHz", info.channel * CHANNEL2FREQ);
+    LCD_ShowString(INFO_FREQ_X, INFO_LINE_2, BLACK, WHITE, 12, text, 1);
+
+    sprintf(text, "Bandwidth: %dMHz", info.bandwidth);
+    LCD_ShowString(INFO_BANDWIDTH_X, INFO_LINE_2, BLACK, WHITE, 12, text, 1);
+
+    // sprintf(text, "Time: T+%lus", info.timestamp / 1000000);
+    // LCD_ShowString(INFO_TIME_X, INFO_LINE_2, BLACK, WHITE, 12, text, 1);
 }
 
 
@@ -246,7 +281,6 @@ void render_task(void *pvParameters) {
 
     // vertical grid lines (channels)
     uint16_t line_x = 0;
-    char text[32];
     for (uint16_t i = 1; i <= CHANNEL_COUNT; i++) {
         line_x = i * CHANNEL2X;
         LCD_DrawLine(line_x, -10 * RSSI2Y, line_x, BASELINE, GRAY);
