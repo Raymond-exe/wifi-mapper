@@ -131,7 +131,7 @@ bool isBetween(uint16_t value, uint16_t min, uint16_t max) {
 
 
 static void wifi_promiscuous_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (playing && type != WIFI_PKT_MGMT) {
+    if (!playing || type != WIFI_PKT_MGMT) {
 		return; // filter
 	}
 
