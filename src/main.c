@@ -50,10 +50,17 @@
 #define MIN_SPEED 1
 #define MAX_SPEED 3
 
+#define HEADER_TOP 3
+#define HEADER_BOT 14
+
 #define SPEED_X1 250
-#define SPEED_Y1 3
 #define SPEED_X2 296
-#define SPEED_Y2 14
+
+#define END_CHAN_X1 150
+#define END_CHAN_X2 196
+
+#define START_CHAN_X1 50
+#define START_CHAN_X2 96
 
 #define INFO_LINE_1 209
 #define INFO_LINE_2 220
@@ -98,6 +105,8 @@ const static char *TAG = "wifi_mapper";
 
 volatile bool playing = true;
 volatile uint8_t speed_setting = MIN_SPEED;
+volatile uint8_t max_channel = CHANNEL_COUNT;
+volatile uint8_t min_channel = 1;
 
 char text[32]; // general-use text buffer
 
@@ -253,8 +262,8 @@ void sniffer_task(void *pvParameters) {
         if (playing) {
             channel++;
         }
-        if (channel > CHANNEL_COUNT) {
-            channel = 1;
+        if (channel > max_channel) {
+            channel = min_channel;
 		};
         sync.channel = channel;
         
@@ -306,19 +315,20 @@ void render_task(void *pvParameters) {
     // draw initial values for buttons
     draw_pause();
     sprintf(text, "SPEED: %d", MIN_SPEED);
-    LCD_DrawFillRectangle(SPEED_X1 - 2, SPEED_Y1, SPEED_X2 + 2, SPEED_Y2, GRAY);
-    LCD_ShowString(SPEED_X1, SPEED_Y1, GRAY, WHITE, 12, text, 1);
+    LCD_DrawFillRectangle(SPEED_X1 - 2, HEADER_TOP, SPEED_X2 + 2, HEADER_BOT, GRAY);
+    LCD_ShowString(SPEED_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
+
+    sprintf(text, "START: %d", min_channel);
+    LCD_DrawFillRectangle(START_CHAN_X1 - 2, HEADER_TOP, START_CHAN_X2 + 2, HEADER_BOT, GRAY);
+    LCD_ShowString(START_CHAN_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
+
+    sprintf(text, " END: %d", max_channel);
+    LCD_DrawFillRectangle(END_CHAN_X1 - 2, HEADER_TOP, END_CHAN_X2 + 2, HEADER_BOT, GRAY);
+    LCD_ShowString(END_CHAN_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
 
     while (1) {
         if (xQueueReceive(touch_queue, &event, 0)) {
             bool eventHandled = false;
-
-            // clear circle around selected packet, if any
-            if (selectedIndex > 0) {
-                LCD_Draw_Circle(packetCache[selectedIndex].x, packetCache[selectedIndex].y, 3, BLACK);
-                draw_x_values(usingFreqLabel);
-                selectedIndex = -1;
-            }
 
             // pause/play button
             if (!eventHandled && isBetween(event.x, PAUSE_X1, PAUSE_X2) && isBetween(event.y, PAUSE_Y1, PAUSE_Y2)) {
@@ -334,27 +344,58 @@ void render_task(void *pvParameters) {
                 eventHandled = true;
             }
             
-            // speed
-            if (!eventHandled && event.x > SPEED_X1 && event.y < SPEED_Y2) {
-                speed_setting++;
-                if (speed_setting > MAX_SPEED) {
-                    speed_setting = MIN_SPEED;
+            // speed, start-channel, & end-channel
+            if (!eventHandled && event.y < HEADER_BOT) {
+                if (event.x > SPEED_X1) {
+                    speed_setting++;
+                    if (speed_setting > MAX_SPEED) {
+                        speed_setting = MIN_SPEED;
+                    }
+
+                    sprintf(text, "SPEED: %d", speed_setting);
+                    LCD_DrawFillRectangle(SPEED_X1, HEADER_TOP, SPEED_X2, HEADER_BOT, GRAY);
+                    LCD_ShowString(SPEED_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
+                    delayInTicks = pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL - 1);
+
+                    ESP_LOGI(TAG, "Speed: %d", speed_setting);
+                    eventHandled = true;
                 }
 
-                sprintf(text, "SPEED: %d", speed_setting);
-                LCD_DrawFillRectangle(SPEED_X1, SPEED_Y1, SPEED_X2, SPEED_Y2, GRAY);
-                LCD_ShowString(SPEED_X1, SPEED_Y1, GRAY, WHITE, 12, text, 1);
-                delayInTicks = pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL - 1);
-                
-                ESP_LOGI(TAG, "Speed: %d", speed_setting);
-                eventHandled = true;
+                if (event.x < START_CHAN_X2) {
+                    min_channel++;
+                    if (min_channel > 9 || min_channel > max_channel) {
+                        min_channel = 1;
+                    }
+
+                    sprintf(text, "START: %d", min_channel);
+                    LCD_DrawFillRectangle(START_CHAN_X1 - 2, HEADER_TOP, START_CHAN_X2 + 2, HEADER_BOT, GRAY);
+                    LCD_ShowString(START_CHAN_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
+                }
+
+                if (event.x > END_CHAN_X1 && event.x < END_CHAN_X2) {
+                    max_channel++;
+                    if (max_channel < min_channel || max_channel > CHANNEL_COUNT) {
+                        max_channel = min_channel;
+                    }
+
+                    sprintf(text, " END: %d", max_channel);
+                    LCD_DrawFillRectangle(END_CHAN_X1 - 2, HEADER_TOP, END_CHAN_X2 + 2, HEADER_BOT, GRAY);
+                    LCD_ShowString(END_CHAN_X1, HEADER_TOP, GRAY, WHITE, 12, text, 1);
+                }
             }
 
             // check if x-axis was tapped on
-            if (!eventHandled && event.y > BASELINE) {
+            if (!eventHandled && event.y > BASELINE && selectedIndex < 0) {
                 usingFreqLabel = !usingFreqLabel;
                 draw_x_values(usingFreqLabel);
                 eventHandled = true;
+            }
+
+            // clear circle around selected packet, if any
+            if (selectedIndex > 0) {
+                LCD_Draw_Circle(packetCache[selectedIndex].x, packetCache[selectedIndex].y, 3, BLACK);
+                draw_x_values(usingFreqLabel);
+                selectedIndex = -1;
             }
 
             // check if tap was on a graphed packet
@@ -379,8 +420,8 @@ void render_task(void *pvParameters) {
         if (playing && xQueueReceive(ap_queue, &info, delayInTicks)) {
             if (info.rssi == 0 && info.bandwidth == 0) { // sync frame
                 draw_channel_selection(info.channel, GRAY);
-                if (info.channel == CHANNEL_COUNT) {
-                    draw_channel_selection(1, GREEN);
+                if (info.channel == max_channel) {
+                    draw_channel_selection(min_channel, GREEN);
                 } else {
                     draw_channel_selection(info.channel + 1, GREEN);
                 }
