@@ -63,7 +63,7 @@
 #define START_CHAN_X2 96
 
 #define INFO_LINE_1 209
-#define INFO_LINE_2 220
+#define INFO_LINE_2 221
 
 #define INFO_CHAN_X 40
 #define INFO_RSSI_X 100
@@ -174,7 +174,8 @@ void draw_x_values(bool useFrequencies) {
 
 
 void draw_info(ap_info_t info) {
-    LCD_DrawFillRectangle(PAUSE_X2 + 5, BASELINE + 7, SCREEN_W - 5, SCREEN_H - 5, GRAY);
+    LCD_DrawFillRectangle(PAUSE_X2 + 5, BASELINE + 7, SCREEN_W - 5, SCREEN_H - 5, BLACK);
+    LCD_DrawRectangle(PAUSE_X2 + 5, BASELINE + 7, SCREEN_W - 5, SCREEN_H - 5, WHITE);
 
     // Line 1: Channel, RSSI, Rate, & sig_mode
     sprintf(text, "Ch: %d", info.channel);
@@ -302,13 +303,13 @@ void render_task(void *pvParameters) {
     uint16_t line_y = 0;
     for (uint16_t nrssi = 10; nrssi <= 90; nrssi += 10) {
         line_y = -nrssi * RSSI2Y;
-        LCD_DrawLine(CHANNEL2X, line_y, SCREEN_W, line_y, GRAY);
+        LCD_DrawLine(CHANNEL2X, line_y, CHANNEL_COUNT * CHANNEL2X, line_y, GRAY);
 
         sprintf(text, "-%ddBm", nrssi);
         LCD_ShowString(5, line_y - 6, BLACK, WHITE, 12, text, 1);
     }
 
-    LCD_DrawLine(CHANNEL2X, BASELINE, SCREEN_W, BASELINE, WHITE);
+    LCD_DrawLine(CHANNEL2X, BASELINE, CHANNEL_COUNT * CHANNEL2X, BASELINE, WHITE);
 
     uint16_t delayInTicks = pdMS_TO_TICKS(speed_setting * SPEED2INTERVAL - 1);
 
